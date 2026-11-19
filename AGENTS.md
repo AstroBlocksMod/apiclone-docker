@@ -77,13 +77,16 @@ Facts that are easy to get wrong:
 - Keep scripts small and boring. Anything longer than a screen probably belongs in a Dockerfile stage or Compose instead.
 - Shell scripts are Bash with `set -euo pipefail`, quote every expansion, and must pass `shellcheck` and `shfmt -d`. They run on macOS and Linux, so avoid GNU-only flags (`sed -i` without a suffix, `readlink -f` and similar), or do the work inside a container instead. macOS ships Bash 3.2: no associative arrays, no `${var,,}`, and no bare `"${array[@]}"` of an array that may be empty under `set -u`. Scripts that run inside an image can use that image's tools (the nginx image is Alpine, so its script is POSIX `sh`).
 - Python (settings, jobs, the smoke test) must pass `ruff check` and `ruff format`, configured in `ruff.toml`. `scripts/lint` runs every linter from its container image.
-- Dockerfiles: multi-stage, pinned base images (exact version tag plus digest), numeric non-root users, a `.dockerignore`, and no secrets in layers or build args. They must pass `hadolint`. Use BuildKit cache mounts for package caches.
+- Dockerfiles: multi-stage, pinned base images (exact version tag plus digest), numeric non-root users, a `.dockerignore`, and no secrets in layers or build args. They must pass `hadolint`. Use BuildKit cache mounts for package caches. Two images start as root on purpose: nginx keeps the official image's root master (so it can read TLS keys that only root may read) with unprivileged workers, and `www-dev` starts as root only to take ownership of its `node_modules` volume and then drops to the owner of the mounted checkout.
+- Every long-running container gets a healthcheck (`jobs` uses a heartbeat file that `jobs.py` touches), and Compose starts services in dependency order with `depends_on: condition: service_healthy`. The one-off `migrate` service has none; others wait for it with `service_completed_successfully`.
+- nginx resolves `apiclone` through Docker's DNS at runtime (`resolve` in the upstream), so recreating APIClone alone doesn't leave the proxy pointing at an old address.
 - Match the upstreams' toolchains: scratch-www's Node version comes from its `.nvmrc`, and APIClone runs on Python 3.12 to 3.14. Read the pinned commit's files instead of hardcoding a version that will drift.
 - Configuration comes from environment variables, documented in `.env.example`. Our `local_settings.py` is the only place that turns them into Django settings.
-- Every container gets a healthcheck, and Compose starts services in dependency order with `depends_on: condition: service_healthy`.
 - Migrations run on startup in development. In production they run in the one-off `migrate` service so two replicas never race on them.
 - Don't publish database or Valkey ports to the host in production.
 - Values that may be empty in `.env` must not be passed as build args, because an empty arg overrides the Dockerfile default. That is why the upstream overrides in `.env.example` are commented out.
+- Catch configuration mistakes in the script or the settings with a message that says what to change, not in a container that never gets healthy. `scripts/prod` checks `.env` before calling Compose, and `local_settings.py` exits through `_fail()`, because `manage.py` swallows `ImproperlyConfigured` raised while settings load and then fails somewhere unrelated.
+- `scripts/restore` checks the whole backup before it changes anything, and stages files before swapping them in. Keep it that way: a damaged backup must leave the running site's data alone.
 
 ## Testing
 

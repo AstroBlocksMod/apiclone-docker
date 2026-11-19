@@ -20,6 +20,7 @@ import json
 import os
 import re
 import socket
+import ssl
 import sys
 import time
 import urllib.error
@@ -61,13 +62,23 @@ class Client:
         self.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.jar))
 
     def request(self, method, url, body=None, headers=None):
+        """Returns (status, body). The response headers end up in self.headers."""
         headers = {"Origin": self.www, "Referer": self.www + "/", **(headers or {})}
         req = urllib.request.Request(url, data=body, method=method, headers=headers)
         try:
             with self.opener.open(req, timeout=30) as response:
+                self.headers = response.headers
                 return response.status, response.read()
         except urllib.error.HTTPError as error:
+            self.headers = error.headers
             return error.code, error.read()
+
+    def check_cors(self, what):
+        """urllib ignores CORS, so check the headers a browser would insist on."""
+        allowed = self.headers.get("Access-Control-Allow-Origin")
+        check(allowed == self.www, f"{what} allows the origin {self.www} (got {allowed!r})")
+        credentials = self.headers.get("Access-Control-Allow-Credentials")
+        check(credentials == "true", f"{what} allows credentials (got {credentials!r})")
 
     def cookie(self, name):
         return next((c.value for c in self.jar if c.name == name), None)
@@ -99,7 +110,13 @@ class WebSocket:
 
     def __init__(self, url, headers):
         parts = urlsplit(url)
-        self.sock = socket.create_connection((parts.hostname, parts.port or 80), timeout=15)
+        secure = parts.scheme == "wss"
+        self.sock = socket.create_connection(
+            (parts.hostname, parts.port or (443 if secure else 80)), timeout=15
+        )
+        if secure:
+            context = ssl.create_default_context()
+            self.sock = context.wrap_socket(self.sock, server_hostname=parts.hostname)
         self.file = self.sock.makefile("rb")
         key = base64.b64encode(os.urandom(16)).decode()
         lines = [
@@ -185,6 +202,21 @@ def main():
     csrf = client.cookie("scratchcsrftoken")
     check(status == 200 and csrf, "APIClone sets a CSRF cookie")
 
+    # In development scratch-www and APIClone are on different origins, so a
+    # browser asks first (a preflight) and then checks the response headers.
+    cross_origin = urlsplit(client.www).netloc != urlsplit(client.api).netloc
+    if cross_origin:
+        status, _ = client.request(
+            "OPTIONS",
+            client.api + "/accounts/login/",
+            headers={
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "content-type,x-csrftoken,x-requested-with",
+            },
+        )
+        check(status == 200, f"the login preflight is accepted (HTTP {status})")
+        client.check_cors("the login preflight")
+
     status, body = client.request(
         "POST",
         client.api + "/accounts/login/",
@@ -198,6 +230,8 @@ def main():
         },
     )
     check(status == 200, f"login request from {client.www} is accepted (HTTP {status})")
+    if cross_origin:
+        client.check_cors("the login response")
     check(json.loads(body)[0].get("success") == 1, f"logging in as {args.username} works")
 
     status, body = client.request("GET", client.api + "/session/")
@@ -220,7 +254,8 @@ def main():
 
     # Cloud variables
     api = urlsplit(client.api)
-    ws_url = f"ws://{api.netloc}/hosts/clouddata"
+    ws_scheme = "wss" if api.scheme == "https" else "ws"
+    ws_url = f"{ws_scheme}://{api.netloc}/hosts/clouddata"
     headers = {
         "Origin": client.www,
         "Cookie": f"scratchsessionsid={client.cookie('scratchsessionsid')}",
@@ -229,6 +264,11 @@ def main():
     sender, watcher = WebSocket(ws_url, headers), WebSocket(ws_url, headers)
     for ws in (sender, watcher):
         ws.send(handshake)
+    if not args.skip_cloud_broadcast:
+        # The handshake reply (the variables so far) means the server has
+        # registered the connection, so the watcher can't miss the update.
+        for ws in (sender, watcher):
+            ws.receive()
     value = str(int(time.time()))
     sender.send(
         {

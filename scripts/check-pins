@@ -34,13 +34,15 @@ esac
 # Every requirement APIClone lists must be in our lock.
 normalize() { tr 'A-Z_.' 'a-z--'; }
 locked="$(grep -Eo '^[A-Za-z0-9._-]+==' docker/apiclone/requirements.txt | sed 's/==$//' | normalize)"
-while read -r name; do
+upstream="$(curl -fsSL "$(raw_url "$apiclone_repo" "$apiclone_commit" requirements.txt)")"
+names="$(sed -E 's/#.*//; s/[[:space:]]//g; s/[][<>=!~;].*//' <<<"$upstream" | grep -v '^$' | normalize || true)"
+[[ -n "$names" ]] || fail "found no requirements in APIClone's requirements.txt at $apiclone_commit"
+for name in $names; do
 	if grep -qx "$name" <<<"$locked"; then
 		echo "ok: $name is locked"
 	else
 		fail "$name is in APIClone's requirements.txt but not in docker/apiclone/requirements.txt. Run scripts/lock."
 	fi
-done < <(curl -fsSL "$(raw_url "$apiclone_repo" "$apiclone_commit" requirements.txt)" |
-	sed -E 's/#.*//; s/[[:space:]]//g; s/[][<>=!~;].*//' | grep -v '^$' | normalize)
+done
 
 exit "$failed"

@@ -80,7 +80,12 @@ services:
     command: [python, /opt/apiclone-docker/jobs.py]
     restart: unless-stopped
     healthcheck:
-      disable: true
+      # jobs.py touches the file on every pass of its loop, about once a
+      # minute. A long job (indexing a big site) delays that, hence the margin.
+      test: [CMD-SHELL, 'test -n "$$(find /tmp/jobs-heartbeat -mmin -30)"']
+      interval: 60s
+      timeout: 5s
+      start_period: 60s
     depends_on:
       <<: *database
       migrate:

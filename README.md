@@ -99,7 +99,9 @@ scripts/backup                  # writes backups/<timestamp>/
 scripts/restore backups/<timestamp>
 ```
 
-A backup is a database dump plus an archive of the uploaded files, taken while the site runs. Restoring replaces both, after asking you to confirm (`--yes` skips the question). A backup can only be restored with the same `DB_ENGINE`.
+A backup is a database dump plus an archive of the uploaded files and of any mail written to files, taken while the site runs. The two are copied one after the other, so something saved in the middle of a backup can be in one and not the other; stop the site first (`scripts/prod stop proxy`) if you need them to match exactly.
+
+Restoring checks that the backup is intact, asks you to confirm (`--yes` skips the question), and then replaces the database and files. A damaged backup is refused before anything changes. A backup can only be restored with the same `DB_ENGINE`.
 
 ### Source code for your users
 

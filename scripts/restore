@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Restores a backup made by scripts/backup into the production stack. This
-# replaces the current database and uploaded files.
+# replaces the current database, uploaded files and file-based mail.
 #
 # Usage: scripts/restore [--yes] <directory>
 source "$(dirname "$0")/lib.sh"
@@ -19,10 +19,32 @@ backup_engine="$(cat "$src/engine")"
 [[ "$engine" == "$backup_engine" ]] || die "the backup is from $backup_engine but DB_ENGINE is $engine"
 [[ -z "$(env_value DB_HOST)" ]] || die "DB_HOST is set, so the database is outside this stack. Restore it with its own tools."
 
+# Check the whole backup before touching anything, so a damaged one changes nothing.
+case "$engine" in
+mysql | mariadb) db_file="$src/database.sql.gz" ;;
+sqlite) db_file="$src/database.sqlite3" ;;
+*) die "unknown DB_ENGINE $engine" ;;
+esac
+[[ -f "$db_file" ]] || die "$db_file is missing"
+if [[ "$engine" == sqlite ]]; then
+	[[ "$(head -c 15 "$db_file")" == "SQLite format 3" ]] || die "$db_file is not an SQLite database"
+else
+	gzip -t "$db_file" 2>/dev/null || die "$db_file is damaged"
+fi
+tar -tzf "$src/files.tar.gz" >/dev/null 2>&1 || die "$src/files.tar.gz is damaged"
+
 if [[ "$yes" != 1 ]]; then
 	read -r -p "This replaces the current database and uploaded files with $src. Type yes to go on: " answer
 	[[ "$answer" == yes ]] || die "stopped, nothing changed"
 fi
+
+on_exit() {
+	if [[ $? != 0 ]]; then
+		echo "Restore failed. APIClone is stopped and the data may be partly restored." >&2
+		echo "Fix the problem and run the restore again, or start the site as it is with: scripts/prod up -d" >&2
+	fi
+}
+trap on_exit EXIT
 
 prod_compose stop proxy apiclone jobs
 services=(valkey)
@@ -31,26 +53,34 @@ if [[ "$engine" != sqlite ]]; then
 fi
 prod_compose up -d --wait "${services[@]}"
 
+in_data_volume() {
+	prod_compose run --rm --no-deps -T --entrypoint sh apiclone -c "$1"
+}
+
 # shellcheck disable=SC2016 # the variables expand inside the container
 case "$engine" in
 mysql)
-	gunzip -c "$src/database.sql.gz" |
+	gunzip -c "$db_file" |
 		prod_compose exec -T mysql sh -c 'exec mysql -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE"'
 	;;
 mariadb)
-	gunzip -c "$src/database.sql.gz" |
+	gunzip -c "$db_file" |
 		prod_compose exec -T mariadb sh -c 'exec mariadb -u"$MARIADB_USER" -p"$MARIADB_PASSWORD" "$MARIADB_DATABASE"'
 	;;
 sqlite)
-	prod_compose run --rm --no-deps -T --entrypoint sh apiclone \
-		-c 'rm -f /data/db.sqlite3-wal /data/db.sqlite3-shm && cat >/data/db.sqlite3' \
-		<"$src/database.sqlite3"
+	# Written next to the live database, then moved over it in one step.
+	in_data_volume 'cat >/data/db.sqlite3.restore &&
+		rm -f /data/db.sqlite3-wal /data/db.sqlite3-shm &&
+		mv /data/db.sqlite3.restore /data/db.sqlite3' <"$db_file"
 	;;
-*) die "unknown DB_ENGINE $engine" ;;
 esac
 
-prod_compose run --rm --no-deps -T --entrypoint sh apiclone \
-	-c 'rm -rf /data/files && tar -C /data -xzf -' <"$src/files.tar.gz"
+# Unpack beside the live directories first and swap them in only once that worked.
+in_data_volume 'rm -rf /data/.restore && mkdir /data/.restore &&
+	tar -C /data/.restore -xzf - &&
+	rm -rf /data/files /data/mail &&
+	mv /data/.restore/* /data/ &&
+	rmdir /data/.restore' <"$src/files.tar.gz"
 
 prod_compose up -d --wait
 echo "Restored $src"

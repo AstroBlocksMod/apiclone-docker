@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Backs up the production database and uploaded files while the stack runs.
+# Backs up the production database, uploaded files and file-based mail while
+# the stack runs. The database and the files are copied one after the other, so
+# a project saved during the backup can end up in one and not the other.
 #
 # Usage: scripts/backup [directory]   (default: backups/<UTC timestamp>)
 source "$(dirname "$0")/lib.sh"
@@ -8,8 +10,9 @@ engine="$(env_value DB_ENGINE mysql)"
 [[ -z "$(env_value DB_HOST)" ]] || die "DB_HOST is set, so the database is outside this stack. Back it up with its own tools."
 
 dest="${1:-backups/$(date -u +%Y%m%dT%H%M%SZ)}"
-[[ ! -e "$dest" ]] || die "$dest already exists"
-mkdir -p "$dest"
+mkdir -p "$(dirname "$dest")"
+# mkdir without -p fails if the directory exists, so two backups can't share it.
+mkdir "$dest" 2>/dev/null || die "$dest already exists"
 echo "$engine" >"$dest/engine"
 
 # Single quotes are deliberate below: the variables expand inside the container.
@@ -31,16 +34,13 @@ sqlite)
 	# The sqlite3 backup API gives a consistent copy while APIClone is running.
 	prod_compose exec -T apiclone python -c '
 import sqlite3, sys
-src = sqlite3.connect("/data/db.sqlite3")
-dst = sqlite3.connect("/tmp/backup.sqlite3")
-src.backup(dst)
-dst.close()
-sys.stdout.buffer.write(open("/tmp/backup.sqlite3", "rb").read())
+copy = sqlite3.connect(":memory:")
+sqlite3.connect("/data/db.sqlite3").backup(copy)
+sys.stdout.buffer.write(copy.serialize())
 ' >"$dest/database.sqlite3"
-	prod_compose exec -T apiclone rm -f /tmp/backup.sqlite3
 	;;
 *) die "unknown DB_ENGINE $engine" ;;
 esac
 
-prod_compose exec -T apiclone tar -C /data -czf - files >"$dest/files.tar.gz"
+prod_compose exec -T apiclone tar -C /data -czf - files mail >"$dest/files.tar.gz"
 echo "Backed up to $dest"

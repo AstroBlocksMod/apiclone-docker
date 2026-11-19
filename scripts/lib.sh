@@ -42,6 +42,13 @@ raw_url() {
 
 prod_compose() {
 	[[ -f .env ]] || die "no .env. Copy .env.example to .env and fill it in first."
+	case "$(env_value DB_ENGINE mysql)" in
+	mysql | mariadb)
+		# The database images refuse to set up a user with an empty password,
+		# and would only show that as a database that never gets healthy.
+		[[ -n "$(env_value DB_PASSWORD)" ]] || die "set DB_PASSWORD in .env (needed for $(env_value DB_ENGINE mysql))"
+		;;
+	esac
 	# Docker would create a missing bind-mount directory owned by root, which
 	# makes it awkward to put certificates in later.
 	mkdir -p "$(env_value TLS_CERT_DIR ./certs)"

@@ -22,14 +22,20 @@ fetch() {
 	fi
 
 	echo "Cloning $repo into $dir"
-	mkdir -p "$dir"
-	git -C "$dir" init -q
-	git -C "$dir" remote add origin "$repo"
-	if ! git -C "$dir" fetch -q --depth 1 origin "$commit"; then
+	# Build the checkout next to its final place and move it there only once
+	# it is complete, so a failed clone leaves nothing behind to block a retry.
+	mkdir -p "$(dirname "$dir")"
+	tmp="$(mktemp -d "$dir.partial.XXXXXX")"
+	trap 'rm -rf "$tmp"' EXIT
+	git -C "$tmp" init -q
+	git -C "$tmp" remote add origin "$repo"
+	if ! git -C "$tmp" fetch -q --depth 1 origin "$commit"; then
 		echo "The server refused a shallow fetch of one commit. Fetching everything instead."
-		git -C "$dir" fetch -q origin
+		git -C "$tmp" fetch -q origin
 	fi
-	git -C "$dir" -c advice.detachedHead=false checkout -q "$commit"
+	git -C "$tmp" -c advice.detachedHead=false checkout -q "$commit"
+	mv "$tmp" "$dir"
+	trap - EXIT
 }
 
 fetch "$(env_value APICLONE_SRC ./upstream/apiclone)" \
