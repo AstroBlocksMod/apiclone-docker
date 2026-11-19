@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Checks that the pins in the Dockerfile agree with the upstreams they point at:
+# the Node version matches scratch-www's .nvmrc, the routing script comes from
+# the same fork commit, and the Python lock covers APIClone's requirements.
+#
+# Usage: scripts/check-pins
+source "$(dirname "$0")/lib.sh"
+
+failed=0
+fail() {
+	echo "FAIL: $*" >&2
+	failed=1
+}
+
+www_repo="$(pin WWW_REPO)"
+www_commit="$(pin WWW_COMMIT)"
+apiclone_repo="$(pin APICLONE_REPO)"
+apiclone_commit="$(pin APICLONE_COMMIT)"
+
+# NODE_IMAGE looks like node:20.20.2-trixie-slim@sha256:...
+node_version="$(pin NODE_IMAGE | sed -E 's/^node:([0-9.]+)-.*/\1/')"
+nvmrc="$(curl -fsSL "$(raw_url "$www_repo" "$www_commit" .nvmrc)" | tr -d '[:space:]v')"
+if [[ "$node_version" == "$nvmrc" ]]; then
+	echo "ok: NODE_IMAGE uses Node $node_version, as scratch-www's .nvmrc asks"
+else
+	fail "NODE_IMAGE uses Node $node_version but .nvmrc at $www_commit says $nvmrc"
+fi
+
+case "$(pin NGINX_ROUTES_SCRIPT)" in
+*"/commit/$www_commit/"*) echo "ok: NGINX_ROUTES_SCRIPT comes from WWW_COMMIT" ;;
+*) fail "NGINX_ROUTES_SCRIPT should point at the same commit as WWW_COMMIT ($www_commit)" ;;
+esac
+
+# Every requirement APIClone lists must be in our lock.
+normalize() { tr 'A-Z_.' 'a-z--'; }
+locked="$(grep -Eo '^[A-Za-z0-9._-]+==' docker/apiclone/requirements.txt | sed 's/==$//' | normalize)"
+upstream="$(curl -fsSL "$(raw_url "$apiclone_repo" "$apiclone_commit" requirements.txt)")"
+names="$(sed -E 's/#.*//; s/[[:space:]]//g; s/[][<>=!~;].*//' <<<"$upstream" | grep -v '^$' | normalize || true)"
+[[ -n "$names" ]] || fail "found no requirements in APIClone's requirements.txt at $apiclone_commit"
+for name in $names; do
+	if grep -qx "$name" <<<"$locked"; then
+		echo "ok: $name is locked"
+	else
+		fail "$name is in APIClone's requirements.txt but not in docker/apiclone/requirements.txt. Run scripts/lock."
+	fi
+done
+
+exit "$failed"

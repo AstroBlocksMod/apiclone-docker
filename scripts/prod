@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Runs docker compose with the production stack, after checking .env exists.
+#
+# Usage: scripts/prod <docker compose command>
+#   scripts/prod up -d --build   build and start (or update) everything
+#   scripts/prod logs -f         follow the logs
+#   scripts/prod down            stop everything, keeping the data
+source "$(dirname "$0")/lib.sh"
+
+[[ $# -gt 0 ]] || die "usage: scripts/prod <docker compose command>, for example: scripts/prod up -d --build"
+prod_compose "$@"

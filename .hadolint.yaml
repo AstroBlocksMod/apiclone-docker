@@ -1,0 +1,4 @@
+ignored:
+  # Pinning Debian package versions breaks the build whenever Debian ships a
+  # security update. The base image digest pins the distribution instead.
+  - DL3008

@@ -1,0 +1,11 @@
+line-length = 100
+target-version = "py312"
+
+[lint]
+select = ["E", "W", "F", "I", "B", "UP", "S"]
+
+[lint.per-file-ignores]
+# Django settings overrides build on APIClone's settings with a star import.
+"docker/apiclone/*settings.py" = ["F403", "F405"]
+# The smoke test talks to a local stack on purpose.
+"tests/*" = ["S310"]

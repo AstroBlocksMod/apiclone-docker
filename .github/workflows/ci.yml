@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SMOKE_USER: smoke
+  SMOKE_PASSWORD: smoke-test-password
+  # APIClone never sends on cloud WebSockets at the pinned commit (its
+  # consumer's send() is not awaited). Drop this once that is fixed upstream.
+  SMOKE_FLAGS: --skip-cloud-broadcast
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: scripts/lint
+      - run: scripts/check-pins
+
+  dev:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - run: scripts/fetch
+      - name: Start the dev stack
+        run: docker compose up -d --build --wait --wait-timeout 1500
+      - name: Create an admin
+        run: >
+          docker compose exec -T
+          -e DJANGO_SUPERUSER_USERNAME="$SMOKE_USER"
+          -e DJANGO_SUPERUSER_PASSWORD="$SMOKE_PASSWORD"
+          -e DJANGO_SUPERUSER_EMAIL=smoke@example.com
+          apiclone python manage.py createsuperuser --noinput
+      - name: Smoke test
+        run: >
+          tests/smoke.py --www http://localhost:8333 --api http://localhost:8000
+          --username "$SMOKE_USER" --password "$SMOKE_PASSWORD" $SMOKE_FLAGS
+      - name: Logs
+        if: failure()
+        run: docker compose logs --tail 200
+
+  prod:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        db: [mysql, mariadb, sqlite]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Write .env
+        run: |
+          {
+            echo "SITE_URL=http://localhost"
+            echo "SECRET_KEY=$(python3 -c 'import secrets; print(secrets.token_urlsafe(50))')"
+            echo "DB_ENGINE=${{ matrix.db }}"
+            echo 'COMPOSE_PROFILES=${DB_ENGINE}'
+            echo "DB_PASSWORD=$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')"
+          } >.env
+      - name: Build and start the production stack
+        run: scripts/prod up -d --build --wait --wait-timeout 300
+      - name: Create an admin
+        run: >
+          scripts/prod exec -T
+          -e DJANGO_SUPERUSER_USERNAME="$SMOKE_USER"
+          -e DJANGO_SUPERUSER_PASSWORD="$SMOKE_PASSWORD"
+          -e DJANGO_SUPERUSER_EMAIL=smoke@example.com
+          apiclone python manage.py createsuperuser --noinput
+      - name: Smoke test
+        run: >
+          tests/smoke.py --www http://localhost --api http://localhost
+          --username "$SMOKE_USER" --password "$SMOKE_PASSWORD" $SMOKE_FLAGS
+      - name: Back up, delete the admin, restore, and test again
+        run: |
+          scripts/backup backups/ci
+          scripts/prod exec -T apiclone python manage.py shell -c \
+            "from django.contrib.auth.models import User; User.objects.filter(username='$SMOKE_USER').delete()"
+          scripts/restore --yes backups/ci
+          tests/smoke.py --www http://localhost --api http://localhost \
+            --username "$SMOKE_USER" --password "$SMOKE_PASSWORD" $SMOKE_FLAGS
+      - name: Logs
+        if: failure()
+        run: scripts/prod logs --tail 200

@@ -1,0 +1,5 @@
+.env
+/upstream/
+/backups/
+/certs/
+__pycache__/

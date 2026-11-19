@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Clones APIClone and scratch-www for development, at the commits pinned in the
+# Dockerfile (or APICLONE_COMMIT and WWW_COMMIT, if set). An existing checkout
+# is never changed.
+#
+# Usage: scripts/fetch
+source "$(dirname "$0")/lib.sh"
+
+fetch() {
+	local dir="$1" repo="$2" commit="$3" current
+	if [[ -e "$dir" ]]; then
+		if ! current="$(git -C "$dir" rev-parse HEAD 2>/dev/null)"; then
+			die "$dir exists but is not a git checkout"
+		fi
+		if [[ "$current" == "$commit" ]]; then
+			echo "$dir is at the pinned commit."
+		else
+			echo "$dir is at $current, the pin is $commit. Leaving it as it is."
+			echo "  To switch: git -C $dir fetch origin $commit && git -C $dir checkout $commit"
+		fi
+		return
+	fi
+
+	echo "Cloning $repo into $dir"
+	# Build the checkout next to its final place and move it there only once
+	# it is complete, so a failed clone leaves nothing behind to block a retry.
+	# Plain mkdir, not mktemp: mktemp makes the directory private, and the dev
+	# containers read the checkout as a different user.
+	mkdir -p "$(dirname "$dir")"
+	tmp="$dir.partial.$$"
+	rm -rf "$tmp"
+	mkdir "$tmp"
+	trap 'rm -rf "$tmp"' EXIT
+	git -C "$tmp" init -q
+	git -C "$tmp" remote add origin "$repo"
+	if ! git -C "$tmp" fetch -q --depth 1 origin "$commit"; then
+		echo "The server refused a shallow fetch of one commit. Fetching everything instead."
+		git -C "$tmp" fetch -q origin
+	fi
+	git -C "$tmp" -c advice.detachedHead=false checkout -q "$commit"
+	mv "$tmp" "$dir"
+	trap - EXIT
+}
+
+fetch "$(env_value APICLONE_SRC ./upstream/apiclone)" \
+	"$(env_value APICLONE_REPO "$(pin APICLONE_REPO)")" \
+	"$(env_value APICLONE_COMMIT "$(pin APICLONE_COMMIT)")"
+fetch "$(env_value WWW_SRC ./upstream/scratch-www)" \
+	"$(env_value WWW_REPO "$(pin WWW_REPO)")" \
+	"$(env_value WWW_COMMIT "$(pin WWW_COMMIT)")"

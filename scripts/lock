@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Regenerates docker/apiclone/requirements.txt, the hash-locked Python
+# dependencies, from APIClone's requirements.txt (at the pinned commit, or
+# APICLONE_REPO and APICLONE_COMMIT if set) plus
+# docker/apiclone/requirements-extra.in. Run it after bumping APICLONE_COMMIT,
+# and to pick up new releases.
+#
+# Usage: scripts/lock
+source "$(dirname "$0")/lib.sh"
+
+args=(--target apiclone-lock "--output=type=local,dest=docker/apiclone"
+	# Resolve again every time, instead of reusing the last result from cache.
+	--no-cache-filter apiclone-lock-build)
+for name in APICLONE_REPO APICLONE_COMMIT; do
+	value="$(env_value "$name")"
+	if [[ -n "$value" ]]; then
+		args+=(--build-arg "$name=$value")
+	fi
+done
+
+docker buildx build "${args[@]}" .
+echo "Updated docker/apiclone/requirements.txt"
