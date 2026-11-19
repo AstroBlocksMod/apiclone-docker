@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Runs an APIClone manage.py command in the running stack (development unless
+# --prod is given).
+#
+# Usage: scripts/manage [--prod] <command> [arguments]
+#   scripts/manage createsuperuser
+#   scripts/manage --prod changepassword someone
+source "$(dirname "$0")/lib.sh"
+
+prod=0
+if [[ "${1:-}" == --prod ]]; then
+	prod=1
+	shift
+fi
+[[ $# -gt 0 ]] || die "usage: scripts/manage [--prod] <command> [arguments]"
+
+tty_flag=-T
+if [[ -t 0 && -t 1 ]]; then
+	tty_flag=
+fi
+
+if [[ "$prod" == 1 ]]; then
+	prod_compose exec ${tty_flag:+"$tty_flag"} apiclone python manage.py "$@"
+else
+	docker compose exec ${tty_flag:+"$tty_flag"} apiclone python manage.py "$@"
+fi

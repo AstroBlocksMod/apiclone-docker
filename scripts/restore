@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Restores a backup made by scripts/backup into the production stack. This
+# replaces the current database and uploaded files.
+#
+# Usage: scripts/restore [--yes] <directory>
+source "$(dirname "$0")/lib.sh"
+
+yes=0
+if [[ "${1:-}" == --yes ]]; then
+	yes=1
+	shift
+fi
+[[ $# -eq 1 ]] || die "usage: scripts/restore [--yes] <directory>"
+src="$1"
+[[ -f "$src/engine" && -f "$src/files.tar.gz" ]] || die "$src does not look like a backup from scripts/backup"
+
+engine="$(env_value DB_ENGINE mysql)"
+backup_engine="$(cat "$src/engine")"
+[[ "$engine" == "$backup_engine" ]] || die "the backup is from $backup_engine but DB_ENGINE is $engine"
+[[ -z "$(env_value DB_HOST)" ]] || die "DB_HOST is set, so the database is outside this stack. Restore it with its own tools."
+
+if [[ "$yes" != 1 ]]; then
+	read -r -p "This replaces the current database and uploaded files with $src. Type yes to go on: " answer
+	[[ "$answer" == yes ]] || die "stopped, nothing changed"
+fi
+
+prod_compose stop proxy apiclone jobs
+services=(valkey)
+if [[ "$engine" != sqlite ]]; then
+	services+=("$engine")
+fi
+prod_compose up -d --wait "${services[@]}"
+
+# shellcheck disable=SC2016 # the variables expand inside the container
+case "$engine" in
+mysql)
+	gunzip -c "$src/database.sql.gz" |
+		prod_compose exec -T mysql sh -c 'exec mysql -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE"'
+	;;
+mariadb)
+	gunzip -c "$src/database.sql.gz" |
+		prod_compose exec -T mariadb sh -c 'exec mariadb -u"$MARIADB_USER" -p"$MARIADB_PASSWORD" "$MARIADB_DATABASE"'
+	;;
+sqlite)
+	prod_compose run --rm --no-deps -T --entrypoint sh apiclone \
+		-c 'rm -f /data/db.sqlite3-wal /data/db.sqlite3-shm && cat >/data/db.sqlite3' \
+		<"$src/database.sqlite3"
+	;;
+*) die "unknown DB_ENGINE $engine" ;;
+esac
+
+prod_compose run --rm --no-deps -T --entrypoint sh apiclone \
+	-c 'rm -rf /data/files && tar -C /data -xzf -' <"$src/files.tar.gz"
+
+prod_compose up -d --wait
+echo "Restored $src"

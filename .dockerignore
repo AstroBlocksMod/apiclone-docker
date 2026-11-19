@@ -1,0 +1,4 @@
+# Builds only need docker/. Upstream sources come from git, not this directory.
+*
+!docker/
+**/__pycache__

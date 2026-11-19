@@ -1,0 +1,6 @@
+# Installed on top of APIClone's own requirements.txt (see scripts/lock).
+
+# MySQL and MariaDB
+mysqlclient
+# Django's Redis cache backend, used with Valkey. channels_redis needs it too.
+redis

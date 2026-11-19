@@ -1,0 +1,56 @@
+# Development: APIClone and scratch-www, each on its own dev server, running
+# from local checkouts so changes show up without rebuilding. Start it with
+# scripts/dev. Production is compose.prod.yaml.
+name: apiclone-dev
+
+services:
+  apiclone:
+    build:
+      context: .
+      target: apiclone-dev
+      args:
+        - APICLONE_REPO
+        - APICLONE_COMMIT
+    environment:
+      SITE_URL: http://localhost:${WWW_PORT:-8333}
+      EXTRA_ORIGINS: http://127.0.0.1:${WWW_PORT:-8333},http://localhost:${APICLONE_PORT:-8000},http://127.0.0.1:${APICLONE_PORT:-8000}
+      EXTRA_ALLOWED_HOSTS: ${EXTRA_ALLOWED_HOSTS:-}
+      USE_THEME_SELECTOR: ${USE_THEME_SELECTOR:-}
+      THEME_SELECTION_DEFAULT: ${THEME_SELECTION_DEFAULT:-}
+    volumes:
+      - ${APICLONE_SRC:-./upstream/apiclone}:/app
+      - ./docker/apiclone/local_settings.py:/app/apiclone/local_settings.py:ro
+      - data:/data
+    ports:
+      # scratch-www shares this container's network (see below), so its port
+      # is published here.
+      - ${APICLONE_PORT:-8000}:8000
+      - ${WWW_PORT:-8333}:8333
+
+  www:
+    build:
+      context: .
+      target: www-dev
+    # Sharing APIClone's network makes localhost:8000 reach APIClone from
+    # inside this container, which is what scratch-www's FALLBACK proxy expects.
+    network_mode: service:apiclone
+    environment:
+      ROOT_URL: http://localhost:${WWW_PORT:-8333}
+      API_HOST: http://localhost:${APICLONE_PORT:-8000}/hosts/api
+      ASSET_HOST: http://localhost:${APICLONE_PORT:-8000}/hosts/assets
+      BACKPACK_HOST: http://localhost:${APICLONE_PORT:-8000}/hosts/backpack
+      PROJECT_HOST: http://localhost:${APICLONE_PORT:-8000}/hosts/projects
+      STATIC_HOST: http://localhost:${APICLONE_PORT:-8000}/hosts/uploads
+      # No scheme: the editor adds ws:// or wss:// itself.
+      CLOUDDATA_HOST: localhost:${APICLONE_PORT:-8000}/hosts/clouddata
+      FALLBACK: http://localhost:8000
+    volumes:
+      - ${WWW_SRC:-./upstream/scratch-www}:/app
+      - www-node-modules:/app/node_modules
+    depends_on:
+      apiclone:
+        condition: service_healthy
+
+volumes:
+  data:
+  www-node-modules:

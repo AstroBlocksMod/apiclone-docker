@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Starts the development stack, cloning the upstreams first if needed. Extra
+# arguments go to `docker compose up`, for example `scripts/dev -d`.
+#
+# Usage: scripts/dev [docker compose up options]
+source "$(dirname "$0")/lib.sh"
+
+if [[ ! -e "$(env_value APICLONE_SRC ./upstream/apiclone)" || ! -e "$(env_value WWW_SRC ./upstream/scratch-www)" ]]; then
+	scripts/fetch
+fi
+
+echo "APIClone: http://localhost:$(env_value APICLONE_PORT 8000)"
+echo "scratch-www: http://localhost:$(env_value WWW_PORT 8333) (the first start installs dependencies and takes a while)"
+exec docker compose up --build "$@"

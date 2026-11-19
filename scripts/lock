@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Regenerates docker/apiclone/requirements.txt, the hash-locked Python
+# dependencies, from APIClone's requirements.txt at the pinned commit plus
+# docker/apiclone/requirements-extra.in. Run it after bumping APICLONE_COMMIT,
+# and to pick up new releases.
+#
+# Usage: scripts/lock
+source "$(dirname "$0")/lib.sh"
+
+docker buildx build --target apiclone-lock --output type=local,dest=docker/apiclone .
+echo "Updated docker/apiclone/requirements.txt"

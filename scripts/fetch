@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Clones APIClone and scratch-www for development, at the commits pinned in the
+# Dockerfile (or APICLONE_COMMIT and WWW_COMMIT, if set). An existing checkout
+# is never changed.
+#
+# Usage: scripts/fetch
+source "$(dirname "$0")/lib.sh"
+
+fetch() {
+	local dir="$1" repo="$2" commit="$3" current
+	if [[ -e "$dir" ]]; then
+		if ! current="$(git -C "$dir" rev-parse HEAD 2>/dev/null)"; then
+			die "$dir exists but is not a git checkout"
+		fi
+		if [[ "$current" == "$commit" ]]; then
+			echo "$dir is at the pinned commit."
+		else
+			echo "$dir is at $current, the pin is $commit. Leaving it as it is."
+			echo "  To switch: git -C $dir fetch origin $commit && git -C $dir checkout $commit"
+		fi
+		return
+	fi
+
+	echo "Cloning $repo into $dir"
+	mkdir -p "$dir"
+	git -C "$dir" init -q
+	git -C "$dir" remote add origin "$repo"
+	if ! git -C "$dir" fetch -q --depth 1 origin "$commit"; then
+		echo "The server refused a shallow fetch of one commit. Fetching everything instead."
+		git -C "$dir" fetch -q origin
+	fi
+	git -C "$dir" -c advice.detachedHead=false checkout -q "$commit"
+}
+
+fetch "$(env_value APICLONE_SRC ./upstream/apiclone)" \
+	"$(env_value APICLONE_REPO "$(pin APICLONE_REPO)")" \
+	"$(env_value APICLONE_COMMIT "$(pin APICLONE_COMMIT)")"
+fetch "$(env_value WWW_SRC ./upstream/scratch-www)" \
+	"$(env_value WWW_REPO "$(pin WWW_REPO)")" \
+	"$(env_value WWW_COMMIT "$(pin WWW_COMMIT)")"

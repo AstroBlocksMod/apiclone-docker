@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Lints everything in this repo, using each linter's container image so nothing
+# has to be installed. CI runs this too.
+#
+# Usage: scripts/lint
+source "$(dirname "$0")/lib.sh"
+
+shell_files=(scripts/* docker/apiclone/entrypoint.sh docker/www/dev-entrypoint.sh docker/proxy/40-apiclone-site.sh)
+run() { docker run --rm -v "$root:/mnt:ro" -w /mnt "$@"; }
+
+echo "shellcheck"
+run koalaman/shellcheck:v0.11.0 --external-sources "${shell_files[@]}"
+echo "shfmt"
+run mvdan/shfmt:v3.14.1 --diff "${shell_files[@]}"
+echo "hadolint"
+run hadolint/hadolint:v2.15.1 hadolint Dockerfile
+echo "ruff"
+run -e RUFF_NO_CACHE=true ghcr.io/astral-sh/ruff:0.17.5 check docker tests
+run -e RUFF_NO_CACHE=true ghcr.io/astral-sh/ruff:0.17.5 format --diff docker tests
+echo "compose"
+docker compose config --quiet
+SECRET_KEY=lint SITE_URL=http://localhost docker compose -f compose.prod.yaml config --quiet
+echo "All clean."
