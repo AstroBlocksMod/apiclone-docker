@@ -49,9 +49,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app \
     DJANGO_SETTINGS_MODULE=apiclone.settings \
     DATA_DIR=/data
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends libmariadb3 \
-    && rm -rf /var/lib/apt/lists/*
+# apt's package lists and downloads live in cache mounts, not in the layers.
+# Debian's docker-clean hook would empty the download cache after every install.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends libmariadb3
 RUN groupadd --gid 1000 apiclone \
     && useradd --uid 1000 --gid apiclone --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin apiclone \
     && mkdir /data \
@@ -59,9 +63,10 @@ RUN groupadd --gid 1000 apiclone \
 WORKDIR /app
 
 FROM apiclone-base AS apiclone-build-base
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential pkg-config libmariadb-dev \
-    && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update \
+    && apt-get install -y --no-install-recommends build-essential pkg-config libmariadb-dev
 COPY --from=uv /uv /usr/local/bin/uv
 ENV UV_PYTHON_DOWNLOADS=never \
     UV_LINK_MODE=copy
