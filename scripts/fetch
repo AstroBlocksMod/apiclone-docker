@@ -24,8 +24,12 @@ fetch() {
 	echo "Cloning $repo into $dir"
 	# Build the checkout next to its final place and move it there only once
 	# it is complete, so a failed clone leaves nothing behind to block a retry.
+	# Plain mkdir, not mktemp: mktemp makes the directory private, and the dev
+	# containers read the checkout as a different user.
 	mkdir -p "$(dirname "$dir")"
-	tmp="$(mktemp -d "$dir.partial.XXXXXX")"
+	tmp="$dir.partial.$$"
+	rm -rf "$tmp"
+	mkdir "$tmp"
 	trap 'rm -rf "$tmp"' EXIT
 	git -C "$tmp" init -q
 	git -C "$tmp" remote add origin "$repo"

@@ -2,6 +2,12 @@
 # Prepares /data and then runs the container's command.
 set -euo pipefail
 
+if [[ ! -r /app/manage.py ]]; then
+	echo "Can't read the APIClone source at /app as uid $(id -u)." >&2
+	echo "In development, make the checkout readable by everyone, for example: chmod -R a+rX upstream/apiclone" >&2
+	exit 1
+fi
+
 data_dir="${DATA_DIR:-/data}"
 mkdir -p "$data_dir/files" "$data_dir/mail"
 
